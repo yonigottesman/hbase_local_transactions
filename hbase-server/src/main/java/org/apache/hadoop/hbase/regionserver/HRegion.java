@@ -246,6 +246,14 @@ public class HRegion implements HeapSize { // , Writable{
     REPLAY_BATCH_MUTATE, COMPACT_REGION
   }
 
+	/**
+	 * Region scope local timestamp. This timestamp is synced to the timestamps
+	 * received from the TSO in Omid (during get and put/mutate ops) and atomically increments
+	 * during singleton mutations.
+	 */
+  private final TransactionTimestamp latestTransactionTimestamp = new TransactionTimestamp(); 
+
+
   //////////////////////////////////////////////////////////////////////////////
   // Members
   //////////////////////////////////////////////////////////////////////////////
@@ -2536,6 +2544,10 @@ public class HRegion implements HeapSize { // , Writable{
             != OperationStatusCode.NOT_RUN) continue;
 
         Mutation mutation = batchOp.getMutation(i);
+        
+        System.out.println("Put/Delete operation on Region: " + getRegionInfo().toString() + " with timestamp = " + mutation.getTimeStamp()
+          		+ " on server: " + getRegionServerServices().getServerName()); // + ", RS: " + getRegionInfo().getServerName(null).toString());
+        
         if (mutation instanceof Put) {
           updateKVTimestamps(familyMaps[i].values(), byteNow);
           noOfPuts++;
@@ -5103,6 +5115,9 @@ public class HRegion implements HeapSize { // , Writable{
          return results;
        }
     }
+    // update local HRegionServer timestamp in case this is an Omid transaction
+    System.out.println("Get operation on Region: " + getRegionInfo().toString() + " with timestamp = " + get.getTimeRange().getMax()
+    		+ " on server: " + getRegionServerServices().getServerName()); // + ", RS: " + getRegionInfo().getServerName(null).toString());
 
     Scan scan = new Scan(get);
 
