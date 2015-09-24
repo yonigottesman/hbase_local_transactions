@@ -2544,9 +2544,15 @@ public class HRegion implements HeapSize { // , Writable{
             != OperationStatusCode.NOT_RUN) continue;
 
         Mutation mutation = batchOp.getMutation(i);
+        long curTS = latestTransactionTimestamp.updateByMutatation(mutation);
+        if (mutation.getTimeStamp() != HConstants.LATEST_TIMESTAMP)  { // mutation is either a singleton or part of an Omid txn
+        	byteNow = Bytes.toBytes(curTS);
+        }
         
-        System.out.println("Put/Delete operation on Region: " + getRegionInfo().toString() + " with timestamp = " + mutation.getTimeStamp()
-          		+ " on server: " + getRegionServerServices().getServerName()); // + ", RS: " + getRegionInfo().getServerName(null).toString());
+        //TransactionTimestamp.updateMutationTS(mutation,latestTransactionTimestamp);
+//        System.out.println("Put/Delete operation on Region: " + getRegionInfo().toString() + " with timestamp = " + mutation.getTimeStamp()
+//          		+ " on server: " + getRegionServerServices().getServerName() + ". Now = " + Bytes.toLong(byteNow)); // + ", RS: " + getRegionInfo().getServerName(null).toString());
+//        System.out.println("First value to be written = " + Bytes.toString(mutation.getFamilyCellMap().get(mutation.getFamilyCellMap().firstKey()).get(0).getValue()));
         
         if (mutation instanceof Put) {
           updateKVTimestamps(familyMaps[i].values(), byteNow);
@@ -5115,9 +5121,10 @@ public class HRegion implements HeapSize { // , Writable{
          return results;
        }
     }
+    latestTransactionTimestamp.updateByGet(get);
     // update local HRegionServer timestamp in case this is an Omid transaction
-    System.out.println("Get operation on Region: " + getRegionInfo().toString() + " with timestamp = " + get.getTimeRange().getMax()
-    		+ " on server: " + getRegionServerServices().getServerName()); // + ", RS: " + getRegionInfo().getServerName(null).toString());
+//    System.out.println("Get operation on Region: " + getRegionInfo().toString() + " with timestamp = " + get.getTimeRange().getMax()
+//    		+ " on server: " + getRegionServerServices().getServerName()); // + ", RS: " + getRegionInfo().getServerName(null).toString());
 
     Scan scan = new Scan(get);
 
