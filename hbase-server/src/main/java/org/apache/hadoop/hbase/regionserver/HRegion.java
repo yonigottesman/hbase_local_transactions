@@ -169,6 +169,8 @@ import com.google.protobuf.RpcCallback;
 import com.google.protobuf.RpcController;
 import com.google.protobuf.Service;
 
+//import com.yahoo.omid.transaction.CellUtils;
+
 /**
  * HRegion stores data for a certain region of a table.  It stores all columns
  * for each row. A given table consists of one or more HRegions.
@@ -2813,13 +2815,31 @@ public class HRegion implements HeapSize { // , Writable{
       throw new org.apache.hadoop.hbase.DoNotRetryIOException("Action's " +
           "getRow must match the passed row");
     }
-
+    
+    // Check if this is a singleton checkAndMutate
+    
+    boolean valueIsNull = comparator.getValue() == null ||
+	          comparator.getValue().length == 0;
+    
+    boolean isSingleton = (compareOp == CompareOp.NO_OP) && valueIsNull;
+    boolean isRMWTxn = (compareOp == CompareOp.GREATER);// GREATER - identifies a RMW transaction
+    //System.out.println("compateOp = " + compareOp);
+    //System.out.println("checkAndMutate: Singleton? " + isSingleton);
+    
     startRegionOperation();
     try {
       Get get = new Get(row);
       checkFamily(family);
-      get.addColumn(family, qualifier);
+      if (!isSingleton) 
+    	  get.addColumn(family, qualifier);
+      else {
+    	  //get.addColumn(family, CellUtils.addShadowCellSuffix(qualifier));
+    	  List<Cell> cells = w.getFamilyCellMap().values().iterator().next();
+    	  get.addColumn(family, CellUtil.cloneQualifier(cells.get(0)));
+    	  get.addColumn(family, CellUtil.cloneQualifier(cells.get(1)));
+      }
 
+      
       // Lock row - note that doBatchMutate will relock this row if called
       RowLock rowLock = getRowLock(get.getRow());
       // wait for all previous transactions to complete (with lock held)
@@ -2840,59 +2860,78 @@ public class HRegion implements HeapSize { // , Writable{
         }
         List<Cell> result = get(get, false);
 
-        boolean valueIsNull = comparator.getValue() == null ||
-          comparator.getValue().length == 0;
         boolean matches = false;
         long cellTs = 0;
-        if (result.size() == 0 && valueIsNull) {
-          matches = true;
-        } else if (result.size() > 0 && result.get(0).getValueLength() == 0 &&
-            valueIsNull) {
-          matches = true;
-          cellTs = result.get(0).getTimestamp();
-        } else if (result.size() == 1 && !valueIsNull) {
-          Cell kv = result.get(0);
-          cellTs = kv.getTimestamp();
-          int compareResult = comparator.compareTo(kv.getValueArray(),
-              kv.getValueOffset(), kv.getValueLength());
-          switch (compareOp) {
-          case LESS:
-            matches = compareResult < 0;
-            break;
-          case LESS_OR_EQUAL:
-            matches = compareResult <= 0;
-            break;
-          case EQUAL:
-            matches = compareResult == 0;
-            break;
-          case NOT_EQUAL:
-            matches = compareResult != 0;
-            break;
-          case GREATER_OR_EQUAL:
-            matches = compareResult >= 0;
-            break;
-          case GREATER:
-            matches = compareResult > 0;
-            break;
-          default:
-            throw new RuntimeException("Unknown Compare op " + compareOp.name());
-          }
+        
+        if (isSingleton) {
+        	// Check whether the last value is tentative or committed
+        	if (result.size() == 2 && result.get(0).getTimestamp() == result.get(1).getTimestamp()) 
+        		matches = true;
+        	else if (result.size() == 0)
+        		matches = true;
+        	else
+        		matches = false;
+        } else {
+	        
+	        
+	        if (result.size() == 0 && !valueIsNull && isRMWTxn) { //special case where there are no earlier writes to a cell
+	        	matches = true;
+	        } else if (result.size() == 0 && valueIsNull) {
+	          matches = true;
+	        } else if (result.size() > 0 && result.get(0).getValueLength() == 0 &&
+	            valueIsNull) {
+	          matches = true;
+	          cellTs = result.get(0).getTimestamp();
+	        } else if (result.size() == 1 && !valueIsNull) {
+	          Cell kv = result.get(0);
+	          cellTs = kv.getTimestamp();
+	          //System.out.println("Value = " + comparator.getValue() + "  cell value = " + CellUtil.cloneValue(kv));
+	          int compareResult = comparator.compareTo(kv.getValueArray(),
+	              kv.getValueOffset(), kv.getValueLength());
+	          // Override in case a singelton committed write was found
+	          if (isRMWTxn && TransactionTimestamp.isSingleton(cellTs))
+	        	  compareResult = comparator.compareTo(Bytes.toBytes(cellTs));
+	          switch (compareOp) {
+	          case LESS:
+	            matches = compareResult < 0;
+	            break;
+	          case LESS_OR_EQUAL:
+	            matches = compareResult <= 0;
+	            break;
+	          case EQUAL:
+	            matches = compareResult == 0;
+	            break;
+	          case NOT_EQUAL:
+	            matches = compareResult != 0;
+	            break;
+	          case GREATER_OR_EQUAL:
+	            matches = compareResult >= 0;
+	            break;
+	          case GREATER:
+	            matches = compareResult > 0;
+	            break;
+	          default:
+	            throw new RuntimeException("Unknown Compare op " + compareOp.name());
+	          }
+	        }
         }
         //If matches put the new put or delete the new delete
         if (matches) {
-          // We have acquired the row lock already. If the system clock is NOT monotonically
-          // non-decreasing (see HBASE-14070) we should make sure that the mutation has a
-          // larger timestamp than what was observed via Get. doBatchMutate already does this, but
-          // there is no way to pass the cellTs. See HBASE-14054.
-          long now = EnvironmentEdgeManager.currentTimeMillis();
-          long ts = Math.max(now, cellTs); // ensure write is not eclipsed
-          byte[] byteTs = Bytes.toBytes(ts);
-
-          if (w instanceof Put) {
-            updateKVTimestamps(w.getFamilyCellMap().values(), byteTs);
-          }
-          // else delete is not needed since it already does a second get, and sets the timestamp
-          // from get (see prepareDeleteTimestamps).
+        	if (!isSingleton && !isRMWTxn) {
+	          // We have acquired the row lock already. If the system clock is NOT monotonically
+	          // non-decreasing (see HBASE-14070) we should make sure that the mutation has a
+	          // larger timestamp than what was observed via Get. doBatchMutate already does this, but
+	          // there is no way to pass the cellTs. See HBASE-14054.
+	          long now = EnvironmentEdgeManager.currentTimeMillis();
+	          long ts = Math.max(now, cellTs); // ensure write is not eclipsed
+	          byte[] byteTs = Bytes.toBytes(ts);
+	
+	          if (w instanceof Put) {
+	            updateKVTimestamps(w.getFamilyCellMap().values(), byteTs);
+	          }
+	          // else delete is not needed since it already does a second get, and sets the timestamp
+	          // from get (see prepareDeleteTimestamps).
+        	}
 
           // All edits for the given row (across all column families) must
           // happen atomically.

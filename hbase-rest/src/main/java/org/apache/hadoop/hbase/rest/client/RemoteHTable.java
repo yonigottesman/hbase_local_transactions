@@ -822,4 +822,16 @@ public class RemoteHTable implements HTableInterface {
       byte[] value, RowMutations mutation) throws IOException {
     throw new UnsupportedOperationException("checkAndMutate not implemented");
   }
+
+@Override
+public boolean checkTxnAndPut(byte[] row, byte[] family, byte[] qualifier,
+		byte[] value, Put put) throws IOException {
+	throw new UnsupportedOperationException("checkTxnAndPut not implemented");
+}
+
+@Override
+public boolean checkSingletonAndPut(byte[] row, byte[] family,
+		byte[] qualifier, byte[] value, Put put) throws IOException {
+	throw new UnsupportedOperationException("checkSingletonAndPut not implemented");
+}
 }

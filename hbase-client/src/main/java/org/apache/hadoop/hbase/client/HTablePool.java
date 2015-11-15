@@ -651,5 +651,17 @@ public class HTablePool implements Closeable {
       checkState();
       return table.checkAndMutate(row, family, qualifier, compareOp, value, mutation);
     }
+
+	@Override
+	public boolean checkTxnAndPut(byte[] row, byte[] family, byte[] qualifier,
+			byte[] value, Put put) throws IOException {
+		return table.checkTxnAndPut(row, family, qualifier, value, put);
+	}
+
+	@Override
+	public boolean checkSingletonAndPut(byte[] row, byte[] family,
+			byte[] qualifier, byte[] value, Put put) throws IOException {
+		return table.checkSingletonAndPut(row, family, qualifier, value, put);
+	}
   }
 }

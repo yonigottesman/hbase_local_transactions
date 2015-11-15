@@ -1234,7 +1234,61 @@ public class HTable implements HTableInterface {
     return rpcCallerFactory.<Boolean> newCaller().callWithRetries(callable, this.operationTimeout);
   }
 
+  
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public boolean checkTxnAndPut(final byte [] row,
+      final byte [] family, final byte [] qualifier, final byte [] value,
+      final Put put)
+  throws IOException {
+    RegionServerCallable<Boolean> callable =
+      new RegionServerCallable<Boolean>(connection, getName(), row) {
+        public Boolean call() throws IOException {
+          try {
+            MutateRequest request = RequestConverter.buildMutateRequest(
+              getLocation().getRegionInfo().getRegionName(), row, family, qualifier,
+                new BinaryComparator(value), CompareType.GREATER, put);
+            PayloadCarryingRpcController rpcController = rpcControllerFactory.newController();
+            rpcController.setPriority(getTableName());
+            MutateResponse response = getStub().mutate(rpcController, request);
+            return Boolean.valueOf(response.getProcessed());
+          } catch (ServiceException se) {
+            throw ProtobufUtil.getRemoteException(se);
+          }
+        }
+      };
+    return rpcCallerFactory.<Boolean> newCaller().callWithRetries(callable, this.operationTimeout);
+  } 
 
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public boolean checkSingletonAndPut(final byte [] row,
+      final byte [] family, final byte [] qualifier, final byte [] value,
+      final Put put)
+  throws IOException {
+    RegionServerCallable<Boolean> callable =
+      new RegionServerCallable<Boolean>(connection, getName(), row) {
+        public Boolean call() throws IOException {
+          try {
+            MutateRequest request = RequestConverter.buildMutateRequest(
+              getLocation().getRegionInfo().getRegionName(), row, family, qualifier,
+                new BinaryComparator(value), CompareType.NO_OP, put);
+            PayloadCarryingRpcController rpcController = rpcControllerFactory.newController();
+            rpcController.setPriority(getTableName());
+            MutateResponse response = getStub().mutate(rpcController, request);
+            return Boolean.valueOf(response.getProcessed());
+          } catch (ServiceException se) {
+            throw ProtobufUtil.getRemoteException(se);
+          }
+        }
+      };
+    return rpcCallerFactory.<Boolean> newCaller().callWithRetries(callable, this.operationTimeout);
+  } 
+  
   /**
    * {@inheritDoc}
    */

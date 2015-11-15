@@ -665,4 +665,10 @@ public interface HTableInterface extends Closeable {
    */
   boolean checkAndMutate(byte[] row, byte[] family, byte[] qualifier, CompareOp compareOp,
       byte[] value, RowMutations mutation) throws IOException;
+
+  boolean checkTxnAndPut(byte[] row, byte[] family, byte[] qualifier, 
+		  byte[] value, Put put) throws IOException;
+
+  boolean checkSingletonAndPut(byte[] row, byte[] family, byte[] qualifier,
+		byte[] value, Put put) throws IOException;
 }
