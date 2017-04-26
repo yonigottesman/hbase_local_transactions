@@ -25,8 +25,8 @@
 
 # The java implementation to use.  Java 1.6 required.
 # export JAVA_HOME=/usr/java/jdk1.6.0/
-
-# Extra Java CLASSPATH elements.  Optional.
+export JAVA_HOME=${JAVA_HOME}
+ #Extra Java CLASSPATH elements.  Optional.
 # export HBASE_CLASSPATH=
 
 # The maximum amount of heap to use, in MB. Default is 1000.

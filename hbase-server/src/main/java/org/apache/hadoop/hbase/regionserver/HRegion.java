@@ -169,6 +169,8 @@ import com.google.protobuf.RpcCallback;
 import com.google.protobuf.RpcController;
 import com.google.protobuf.Service;
 
+import static org.apache.hadoop.hbase.regionserver.TransactionTimestamp.SINGLETON_TIMESTAMP;
+
 //import com.yahoo.omid.transaction.CellUtils;
 
 /**
@@ -2548,7 +2550,7 @@ public class HRegion implements HeapSize { // , Writable{
         Mutation mutation = batchOp.getMutation(i);
         long curTS = latestTransactionTimestamp.updateByMutatation(mutation);
         if (mutation.getTimeStamp() != HConstants.LATEST_TIMESTAMP)  { // mutation is either a singleton or part of an Omid txn
-        	byteNow = Bytes.toBytes(curTS);
+          byteNow = Bytes.toBytes(curTS);
         }
         
         //TransactionTimestamp.updateMutationTS(mutation,latestTransactionTimestamp);
@@ -2803,6 +2805,9 @@ public class HRegion implements HeapSize { // , Writable{
       CompareOp compareOp, ByteArrayComparable comparator, Mutation w,
       boolean writeToWAL)
   throws IOException{
+
+    //System.out.format("START CHECKANDMUTATE\n");
+
     checkReadOnly();
     //TODO, add check for value length or maybe even better move this to the
     //client if this becomes a global setting
@@ -2835,8 +2840,8 @@ public class HRegion implements HeapSize { // , Writable{
       else {
     	  //get.addColumn(family, CellUtils.addShadowCellSuffix(qualifier));
     	  List<Cell> cells = w.getFamilyCellMap().values().iterator().next();
-    	  get.addColumn(family, CellUtil.cloneQualifier(cells.get(0)));
-    	  get.addColumn(family, CellUtil.cloneQualifier(cells.get(1)));
+    	  get.addColumn(family, CellUtil.cloneQualifier(cells.get(0))); //get cell
+    	  get.addColumn(family, CellUtil.cloneQualifier(cells.get(1))); //get shadow cell
       }
 
       
@@ -2862,19 +2867,50 @@ public class HRegion implements HeapSize { // , Writable{
 
         boolean matches = false;
         long cellTs = 0;
-        
+
+
+
         if (isSingleton) {
+
+          long wcTS = 0;
         	// Check whether the last value is tentative or committed
-        	if (result.size() == 2 && result.get(0).getTimestamp() == result.get(1).getTimestamp()) 
-        		matches = true;
-        	else if (result.size() == 0)
-        		matches = true;
-        	else
-        		matches = false;
+          for (List<Cell> cells: w.getFamilyCellMap().values()) {
+            if (cells == null) continue;
+            assert cells instanceof RandomAccess;
+            int listSize = cells.size();
+            for (int i=0; i < listSize; i++) {
+              Cell cell = cells.get(i);
+              if (cell.getTimestamp() != HConstants.LATEST_TIMESTAMP && cell.getTimestamp() !=  TransactionTimestamp.SINGLETON_TIMESTAMP ){
+                wcTS = cell.getTimestamp();
+                KeyValue kv = KeyValueUtil.ensureKeyValue(cell);
+                Bytes.putLong(kv.getValueArray(), kv.getTimestampOffset(), HConstants.LATEST_TIMESTAMP);
+              }
+            }
+          }
+
+          if (wcTS == 0) {
+            //BRC
+            if (result.size() == 2 && result.get(0).getTimestamp() == result.get(1).getTimestamp())
+              matches = true;
+            else if (result.size() == 0)
+              matches = true;
+            else
+              matches = false;
+          } else {
+            //WC
+            if (result.size() == 2 && result.get(0).getTimestamp() == result.get(1).getTimestamp()
+                    && result.get(1).getTimestamp() <= wcTS)
+              matches = true;
+            else if (result.size() == 0)
+              matches = true;
+            else
+              matches = false;
+          }
+
         } else {
 	        
 	        
-	        if (result.size() == 0 && !valueIsNull && isRMWTxn) { //special case where there are no earlier writes to a cell
+          if (result.size() == 0 && !valueIsNull && isRMWTxn) { //special case where there are no earlier writes to a cell
 	        	matches = true;
 	        } else if (result.size() == 0 && valueIsNull) {
 	          matches = true;
@@ -2936,6 +2972,8 @@ public class HRegion implements HeapSize { // , Writable{
           // All edits for the given row (across all column families) must
           // happen atomically.
           doBatchMutate((Mutation)w);
+
+
           this.checkAndMutateChecksPassed.increment();
           return true;
         }
@@ -3199,6 +3237,7 @@ public class HRegion implements HeapSize { // , Writable{
    */
   private void put(final byte [] row, byte [] family, List<Cell> edits)
   throws IOException {
+    //System.out.format("START put\n");
     NavigableMap<byte[], List<Cell>> familyMap;
     familyMap = new TreeMap<byte[], List<Cell>>(Bytes.BYTES_COMPARATOR);
 
@@ -5133,7 +5172,7 @@ public class HRegion implements HeapSize { // , Writable{
     // Verify families are all valid
     if (get.hasFamilies()) {
       for (byte [] family: get.familySet()) {
-        checkFamily(family);
+          checkFamily(family);
       }
     } else { // Adding all families to scanner
       for (byte[] family: this.htableDescriptor.getFamiliesKeys()) {
@@ -5141,6 +5180,14 @@ public class HRegion implements HeapSize { // , Writable{
       }
     }
     List<Cell> results = get(get, true);
+    for (Map.Entry<byte[],NavigableSet<byte[]>> family : get.getFamilyMap().entrySet()) {
+      //System.out.println("---YONIGO FAMILY " + Bytes.toString(family.getKey()));
+      if (Bytes.toString(family.getKey()).equals("GET_LOCAL_COUNTER"))
+      {
+        results.add(CellUtil.createCell(get.getRow(),Bytes.toBytes("GET_LOCAL_COUNTER"),Bytes.toBytes("COUNTER_VALUE")
+                ,latestTransactionTimestamp.get(),(byte)0,Bytes.toBytes(latestTransactionTimestamp.get())));
+      }
+    }
     return Result.create(results, get.isCheckExistenceOnly() ? !results.isEmpty() : null);
   }
 
@@ -5191,7 +5238,6 @@ public class HRegion implements HeapSize { // , Writable{
       }
       this.metricsRegion.updateGet(totalSize);
     }
-
     return results;
   }
 

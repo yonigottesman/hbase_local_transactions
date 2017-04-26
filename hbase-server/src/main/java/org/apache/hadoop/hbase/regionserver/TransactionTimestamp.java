@@ -97,6 +97,7 @@ public class TransactionTimestamp {
 	}
 
 	public long updateByGet(Get get) {
+
 		long ts = get.getTimeRange().getMax();
 		if (ts == HConstants.LATEST_TIMESTAMP || ts == SINGLETON_TIMESTAMP)
 			return ts;
